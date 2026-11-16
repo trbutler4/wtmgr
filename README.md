@@ -38,9 +38,20 @@ the layout is derived from that directory's parent, not the checkout location.
 
 `path` prints the expected location, even before a worktree exists.
 `list` includes all Git worktrees. `remove` only targets the managed location,
-refuses dirty or locked worktrees, and never deletes branches.
+refuses dirty or locked worktrees by default, and never deletes branches.
 Existing branches cannot be checked out in multiple worktrees: Git's normal
-safety checks apply. No force flag, automatic pruning, or automatic branch deletion.
+safety checks apply. No automatic pruning or automatic branch deletion.
+
+To intentionally discard uncommitted changes and untracked files:
+
+```sh
+wtmgr remove --force feature/login
+# Also accepted: wtmgr remove feature/login --force
+```
+
+**Warning:** `--force` permanently discards uncommitted work in that checkout.
+It passes one `--force` to Git. Locked worktrees remain protected, and the
+branch is kept. Repeated `--force` flags are not accepted.
 
 To move or manage worktrees created elsewhere, use `git worktree` directly.
 

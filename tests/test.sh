@@ -26,6 +26,9 @@ run_cli help >/dev/null
 reject run_cli invalid
 reject run_cli add
 reject run_cli remove a b
+reject run_cli remove --force
+reject run_cli remove --force --force
+reject run_cli remove --force a b
 reject run_cli list --bogus
 reject run_cli pick a b
 cd "$scratch"
@@ -83,8 +86,26 @@ reject run_cli remove missing
 run_cli add locked >/dev/null
 git worktree lock "$base/locked"
 reject run_cli remove locked
+reject run_cli remove --force locked
 git worktree unlock "$base/locked"
 run_cli remove locked
+
+for branch in force-before force-after; do
+    run_cli add "$branch" >/dev/null
+    printf tracked >"$base/$branch/tracked"
+    git -C "$base/$branch" add tracked
+    git -C "$base/$branch" -c commit.gpgsign=false commit -qm tracked
+    printf modified >"$base/$branch/tracked"
+    printf untracked >"$base/$branch/untracked"
+    reject run_cli remove "$branch"
+    if [ "$branch" = force-before ]; then
+        run_cli remove --force "$branch"
+    else
+        run_cli remove "$branch" --force
+    fi
+    [ ! -e "$base/$branch" ] || fail 'force did not remove dirty checkout'
+    git show-ref --verify --quiet "refs/heads/$branch" || fail 'force deleted branch'
+done
 
 git worktree add -qb external-label "$scratch/external checkout" HEAD
 run_cli list --paths >"$scratch/paths"

@@ -8,7 +8,7 @@ Usage: wtmgr <command> [arguments]
 
   list [--paths]          List all worktrees, or only usable checkout paths
   add <branch> [start]     Open an existing branch or create one from start/HEAD
-  remove <branch>          Remove a managed worktree (keep its branch)
+  remove [--force] <branch> Remove a managed worktree (keep its branch)
   path <branch>            Print a managed worktree's absolute path
   pick [query]             Search checkouts with fzf and print the selected path
   help                    Show this help
@@ -17,6 +17,7 @@ Worktrees live beside the repository in <repo-name>-worktrees/<branch>.
 Run from anywhere inside your repository or one of its worktrees.
 Use: cd "$(wtmgr path my-branch)"
 For safe fuzzy navigation, see the wtc shell function in README.md.
+WARNING: remove --force discards uncommitted changes and untracked files.
 EOF
 }
 
@@ -28,12 +29,25 @@ fail() {
 [ "$#" -gt 0 ] || { usage; exit 0; }
 command=$1
 shift
+force=
 case $command in
     help|-h|--help) usage; exit 0 ;;
     list) [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && [ "$1" = --paths ]; } || fail 'usage: wtmgr list [--paths]' ;;
     pick) [ "$#" -le 1 ] || fail 'usage: wtmgr pick [query]' ;;
     add) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: wtmgr add <branch> [start]' ;;
-    remove|path) [ "$#" -eq 1 ] || fail "usage: wtmgr $command <branch>" ;;
+    remove)
+        if [ "$#" -eq 2 ]; then
+            if [ "$1" = --force ]; then
+                force=1
+                shift
+            elif [ "$2" = --force ]; then
+                force=1
+                set -- "$1"
+            fi
+        fi
+        [ "$#" -eq 1 ] && [ "$1" != --force ] || fail 'usage: wtmgr remove [--force] <branch>'
+        ;;
+    path) [ "$#" -eq 1 ] || fail 'usage: wtmgr path <branch>' ;;
     *) fail "unknown command: $command (see wtmgr help)" ;;
 esac
 
@@ -142,7 +156,10 @@ case $command in
         exec git worktree add -b "$branch" -- "$target" "$start"
         ;;
     remove)
-        # Git refuses dirty worktrees. No --force, branch deletion, or rm -rf.
+        # Force is opt-in. Keep Git's locked-worktree protection and branches.
+        if [ -n "$force" ]; then
+            exec git worktree remove --force -- "$target"
+        fi
         exec git worktree remove -- "$target"
         ;;
 esac
