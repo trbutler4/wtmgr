@@ -47,6 +47,12 @@ To move or manage worktrees created elsewhere, use `git worktree` directly.
 
 ```sh
 sh tests/test.sh
+WTMGR_TEST_SHELL=/bin/dash /bin/dash tests/test.sh
+WTMGR_TEST_SHELL=/bin/bash /bin/bash tests/test.sh
 ```
 
+Each run copies only `wtmgr` into a temporary directory before exercising real Git
+repositories. All three runs passed on macOS, including nested branch paths,
+paths with spaces, bare repositories, and dirty/locked removal protection.
+Other operating systems have not been tested.
 Tests use disposable local repositories and do not modify your Git configuration.
