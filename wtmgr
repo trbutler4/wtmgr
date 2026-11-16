@@ -1,0 +1,89 @@
+#!/bin/sh
+# wtmgr: a small, dependency-free Git worktree helper.
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage: wtmgr <command> [arguments]
+
+  list                    List all worktrees
+  add <branch> [start]     Open an existing branch or create one from start/HEAD
+  remove <branch>          Remove a managed worktree (keep its branch)
+  path <branch>            Print a managed worktree's absolute path
+  help                    Show this help
+
+Worktrees live beside the repository in <repo-name>-worktrees/<branch>.
+Run from anywhere inside your repository or one of its worktrees.
+Use: cd "$(wtmgr path my-branch)"
+EOF
+}
+
+fail() {
+    printf 'wtmgr: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$#" -gt 0 ] || { usage; exit 0; }
+command=$1
+shift
+case $command in
+    help|-h|--help) usage; exit 0 ;;
+    list) [ "$#" -eq 0 ] || fail 'usage: wtmgr list' ;;
+    add) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: wtmgr add <branch> [start]' ;;
+    remove|path) [ "$#" -eq 1 ] || fail "usage: wtmgr $command <branch>" ;;
+    *) fail "unknown command: $command (see wtmgr help)" ;;
+esac
+
+command -v git >/dev/null 2>&1 || fail 'Git is required'
+common=$(git rev-parse --git-common-dir) || exit 1
+common=$(CDPATH= cd -- "$common" && pwd -P)
+
+if [ "$command" = list ]; then
+    exec git worktree list
+fi
+
+branch=$1
+# Validate before using a branch as a relative directory. Disallow Git's special
+# previous-checkout syntax and leading dashes as well as invalid ref names.
+case $branch in
+    -*|'@'*|'') fail "invalid branch name: $branch" ;;
+esac
+git check-ref-format "refs/heads/$branch" >/dev/null 2>&1 || fail "invalid branch name: $branch"
+
+parent=${common%/*}
+if [ "$(git config --bool core.bare || :)" = true ]; then
+    parent=$common
+fi
+repo=${parent##*/}
+base=$(CDPATH= cd -- "$parent/.." && pwd -P)/$repo-worktrees
+target=$base/$branch
+
+case $command in
+    path)
+        printf '%s\n' "$target"
+        ;;
+    add)
+        # Never follow an existing symlink out of the managed directory.
+        part=$base
+        rest=$branch
+        while :; do
+            [ ! -L "$part" ] || fail "symlink in worktree path: $part"
+            [ -n "$rest" ] || break
+            case $rest in
+                */*) part=$part/${rest%%/*}; rest=${rest#*/} ;;
+                *) part=$part/$rest; rest= ;;
+            esac
+        done
+        if git show-ref --verify --quiet "refs/heads/$branch"; then
+            [ "$#" -eq 1 ] || fail 'start is only allowed when creating a new branch'
+            exec git worktree add -- "$target" "$branch"
+        fi
+        start=${2:-HEAD}
+        case $start in -*) fail 'start must not begin with a dash' ;; esac
+        exec git worktree add -b "$branch" -- "$target" "$start"
+        ;;
+    remove)
+        # Git refuses dirty worktrees. No --force, branch deletion, or rm -rf.
+        exec git worktree remove -- "$target"
+        ;;
+esac
