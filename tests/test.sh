@@ -26,6 +26,8 @@ run_cli help >/dev/null
 reject run_cli invalid
 reject run_cli add
 reject run_cli remove a b
+reject run_cli list --bogus
+reject run_cli pick a b
 cd "$scratch"
 reject run_cli list
 mkdir 'repo with spaces'
@@ -45,6 +47,15 @@ cd "$base/feature/one/subdir"
 [ "$(run_cli path second)" = "$base/second" ] || fail 'nested worktree path differs'
 run_cli list >"$scratch/list"
 grep -F "$base/feature/one" "$scratch/list" >/dev/null || fail 'list omitted worktree'
+run_cli list --paths >"$scratch/paths"
+grep -Fx "$base/feature/one" "$scratch/paths" >/dev/null || fail 'paths listing corrupted spaces'
+if command -v fzf >/dev/null 2>&1; then
+    selected=$(FZF_DEFAULT_OPTS='--filter=feature/one' run_cli pick)
+    [ "$selected" = "$base/feature/one" ] || fail 'fzf did not return exact path'
+    FZF_DEFAULT_OPTS='--filter=NO_SUCH_WORKTREE_12345' reject run_cli pick
+else
+    printf 'Skipping optional fzf tests: fzf not installed.\n'
+fi
 cd "$root"
 printf dirty >"$base/feature/one/untracked"
 reject run_cli remove feature/one
@@ -75,6 +86,31 @@ reject run_cli remove locked
 git worktree unlock "$base/locked"
 run_cli remove locked
 
+git worktree add -qb external-label "$scratch/external checkout" HEAD
+run_cli list --paths >"$scratch/paths"
+grep -Fx "$(CDPATH= cd -- "$scratch/external checkout" && pwd -P)" "$scratch/paths" >/dev/null || fail 'external checkout missing'
+if command -v fzf >/dev/null 2>&1; then
+    selected=$(FZF_DEFAULT_OPTS='--filter=external-label' run_cli pick)
+    [ "$selected" = "$(CDPATH= cd -- "$scratch/external checkout" && pwd -P)" ] || fail 'branch search missed external path'
+fi
+git worktree remove "$scratch/external checkout"
+git worktree add -q --detach "$scratch/detached checkout" HEAD
+if command -v fzf >/dev/null 2>&1; then
+    selected=$(FZF_DEFAULT_OPTS='--filter=detached' run_cli pick)
+    [ "$selected" = "$(CDPATH= cd -- "$scratch/detached checkout" && pwd -P)" ] || fail 'detached checkout missing'
+fi
+git worktree remove "$scratch/detached checkout"
+git worktree add -q --detach "$scratch/quoted\"checkout" HEAD
+run_cli list --paths >"$scratch/paths"
+grep -Fx "$(CDPATH= cd -- "$scratch/quoted\"checkout" && pwd -P)" "$scratch/paths" >/dev/null || fail 'quoted path corrupted'
+git worktree remove "$scratch/quoted\"checkout"
+newline_path="$scratch/newline
+checkout"
+git worktree add -q --detach "$newline_path" HEAD
+reject run_cli list --paths
+reject run_cli pick
+git worktree remove "$newline_path"
+
 git clone -q --bare "$root" "$scratch/bare.git"
 cd "$scratch/bare.git"
 bare_target=$(run_cli path bare-feature)
@@ -83,4 +119,5 @@ cd "$bare_target"
 [ "$(run_cli path bare-feature)" = "$bare_target" ] || fail 'bare worktree path differs'
 cd "$scratch/bare.git"
 run_cli remove bare-feature
+reject run_cli list --paths
 printf 'All tests passed.\n'

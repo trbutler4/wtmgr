@@ -6,15 +6,17 @@ usage() {
     cat <<'EOF'
 Usage: wtmgr <command> [arguments]
 
-  list                    List all worktrees
+  list [--paths]          List all worktrees, or only usable checkout paths
   add <branch> [start]     Open an existing branch or create one from start/HEAD
   remove <branch>          Remove a managed worktree (keep its branch)
   path <branch>            Print a managed worktree's absolute path
+  pick [query]             Search checkouts with fzf and print the selected path
   help                    Show this help
 
 Worktrees live beside the repository in <repo-name>-worktrees/<branch>.
 Run from anywhere inside your repository or one of its worktrees.
 Use: cd "$(wtmgr path my-branch)"
+For safe fuzzy navigation, see the wtc shell function in README.md.
 EOF
 }
 
@@ -28,7 +30,8 @@ command=$1
 shift
 case $command in
     help|-h|--help) usage; exit 0 ;;
-    list) [ "$#" -eq 0 ] || fail 'usage: wtmgr list' ;;
+    list) [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && [ "$1" = --paths ]; } || fail 'usage: wtmgr list [--paths]' ;;
+    pick) [ "$#" -le 1 ] || fail 'usage: wtmgr pick [query]' ;;
     add) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: wtmgr add <branch> [start]' ;;
     remove|path) [ "$#" -eq 1 ] || fail "usage: wtmgr $command <branch>" ;;
     *) fail "unknown command: $command (see wtmgr help)" ;;
@@ -38,9 +41,65 @@ command -v git >/dev/null 2>&1 || fail 'Git is required'
 common=$(git rev-parse --git-common-dir) || exit 1
 common=$(CDPATH= cd -- "$common" && pwd -P)
 
-if [ "$command" = list ]; then
+if [ "$command" = list ] && [ "$#" -eq 0 ]; then
     exec git worktree list
 fi
+
+# Translate NUL record separators to lines only after protecting embedded
+# newlines and tabs. POSIX read has no -d option. Refuse unusual paths instead
+# of silently navigating to a truncated or ambiguous directory.
+control_a=$(printf '\001')
+control_b=$(printf '\002')
+worktree_rows() {
+    checkout= label= skip=
+    while IFS= read -r line; do
+        case $line in
+            'worktree '*)
+                checkout=${line#worktree }
+                case $checkout in
+                    *"$control_a"*|*"$control_b"*)
+                        fail 'picker/path listing does not support tabs, newlines, or SOH/STX characters in paths'
+                        ;;
+                esac
+                ;;
+            'branch refs/heads/'*) label=${line#branch refs/heads/} ;;
+            detached) label='(detached)' ;;
+            bare|'prunable'|'prunable '*) skip=1 ;;
+            '')
+                if [ -n "$checkout" ] && [ -z "$skip" ]; then
+                    if [ "$command" = pick ]; then
+                        printf '%s\t%s\n' "$checkout" "$label"
+                    else
+                        printf '%s\n' "$checkout"
+                    fi
+                fi
+                checkout= label= skip=
+                ;;
+        esac
+    done
+}
+
+case $command in
+    list|pick)
+        rows=$(git worktree list --porcelain -z |
+            LC_ALL=C tr '\n\t' '\001\002' |
+            LC_ALL=C tr '\000' '\n' | worktree_rows) || exit 1
+        [ -n "$rows" ] || fail 'no usable worktrees'
+        if [ "$command" = list ]; then
+            printf '%s\n' "$rows"
+            exit 0
+        fi
+        command -v fzf >/dev/null 2>&1 || fail 'pick requires fzf (other commands do not)'
+        tab=$(printf '\t')
+        selection=$(printf '%s\n' "$rows" | fzf \
+            --delimiter="$tab" --with-nth=2,1 --no-multi \
+            --no-print-query --no-expect --no-read0 --no-print0 \
+            --prompt='worktree> ' --query="${1:-}") || exit $?
+        [ -n "$selection" ] || exit 1
+        printf '%s\n' "${selection%%"$tab"*}"
+        exit 0
+        ;;
+esac
 
 branch=$1
 # Validate before using a branch as a relative directory. Disallow Git's special

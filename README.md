@@ -12,7 +12,8 @@ mkdir -p "$HOME/.local/bin"
 cp wtmgr "$HOME/.local/bin/wtmgr"
 ```
 
-Requires a POSIX shell and Git with `git worktree remove` support.
+Requires a POSIX shell, standard utilities, and Git with `git worktree remove`
+support. The optional picker and path listing also require `git worktree list -z`.
 Designed for macOS, Linux, BSD, and Git Bash on Windows. Tests run locally on macOS.
 
 ## Use
@@ -43,6 +44,37 @@ safety checks apply. No force flag, automatic pruning, or automatic branch delet
 
 To move or manage worktrees created elsewhere, use `git worktree` directly.
 
+## Fuzzy search
+
+Install `fzf` for the optional picker. All other commands still need only Git.
+
+```sh
+wtmgr pick                  # search by branch or path, print selected path
+wtmgr pick login            # start with a query
+wtmgr list --paths | fzf     # plain paths for your own pipelines
+```
+
+The picker includes the main checkout, unmanaged worktrees, and detached
+checkouts in the current repository. Bare and prunable entries are excluded.
+Spaces, Unicode, quotes, and backslashes in paths are supported. Paths containing
+tabs, newlines, or SOH/STX control characters are explicitly rejected by `pick`
+and `list --paths` rather than split incorrectly. Plain `list` still works.
+
+For Bash or Zsh, add this optional function to your shell config:
+
+```sh
+wtc() {
+    local target
+    target="$(wtmgr pick "$@")" || return $?
+    [ -n "$target" ] || return 0
+    builtin cd -- "$target"
+}
+```
+
+Then use `wtc` or `wtc login` to search and change directories. Escape or no
+match leaves your directory unchanged. Avoid unguarded `cd "$(wtmgr pick)"`,
+which would try to change to an empty path after cancellation.
+
 ## Test
 
 ```sh
@@ -54,5 +86,7 @@ WTMGR_TEST_SHELL=/bin/bash /bin/bash tests/test.sh
 Each run copies only `wtmgr` into a temporary directory before exercising real Git
 repositories. All three runs passed on macOS, including nested branch paths,
 paths with spaces, bare repositories, and dirty/locked removal protection.
+When `fzf` is installed, the suite also exercises real fuzzy selection in filter
+mode, exact path output, branch search for external worktrees, and no-match failure.
 Other operating systems have not been tested.
 Tests use disposable local repositories and do not modify your Git configuration.
